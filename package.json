@@ -9,17 +9,25 @@
     "lint": "eslint"
   },
   "dependencies": {
+    "@ai-sdk/google": "^3.0.67",
+    "@ai-sdk/groq": "^3.0.38",
+    "@mastra/core": "^1.31.0",
+    "ai": "^6.0.174",
     "next": "16.2.4",
+    "pdf-parse": "^2.4.5",
     "react": "19.2.4",
-    "react-dom": "19.2.4"
+    "react-dom": "19.2.4",
+    "zod": "^4.4.2"
   },
   "devDependencies": {
     "@tailwindcss/postcss": "^4",
-    "@types/node": "^20",
+    "@types/node": "^20.19.39",
+    "@types/pdf-parse": "^1.1.5",
     "@types/react": "^19",
     "@types/react-dom": "^19",
     "eslint": "^9",
     "eslint-config-next": "16.2.4",
+    "mastra": "^1.7.3",
     "tailwindcss": "^4",
     "typescript": "^5"
   }
