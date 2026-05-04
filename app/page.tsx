@@ -1,6 +1,6 @@
-"use client";
+﻿"use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useState, useRef, useCallback, useEffect } from "react";
 
 type Analysis = {
   summary: string;
@@ -10,18 +10,26 @@ type Analysis = {
   wordCount: number;
 };
 
-type ChatMessage = {
-  role: "user" | "assistant";
+type ChatMessage = { role: "user" | "assistant"; content: string };
+
+type StoredDocument = {
+  id: string;
+  filename: string;
   content: string;
+  analysis: Analysis;
+  createdAt: string;
 };
 
 type DocState =
   | { phase: "empty" }
   | { phase: "analyzing"; filename: string }
-  | { phase: "ready"; docId: string; filename: string; analysis: Analysis; warning?: string }
+  | { phase: "ready"; docId: string; filename: string; analysis: Analysis; document: StoredDocument; warning?: string; elapsedMs?: number }
   | { phase: "error"; error: string };
 
+type Theme = "dark" | "light";
+
 export default function Home() {
+  const [theme, setTheme] = useState<Theme>("dark");
   const [doc, setDoc] = useState<DocState>({ phase: "empty" });
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [input, setInput] = useState("");
@@ -29,13 +37,50 @@ export default function Home() {
   const fileInputRef = useRef<HTMLInputElement>(null);
   const chatEndRef = useRef<HTMLDivElement>(null);
 
+  // Sincronizar theme con el DOM (ya aplicado por el script de layout.tsx)
+  useEffect(() => {
+    const current = document.documentElement.getAttribute("data-theme") as Theme | null;
+    if (current === "dark" || current === "light") setTheme(current);
+  }, []);
+
+  const toggleTheme = useCallback(() => {
+    setTheme((prev) => {
+      const next: Theme = prev === "dark" ? "light" : "dark";
+      try { localStorage.setItem("docagent-theme", next); } catch {}
+      document.documentElement.setAttribute("data-theme", next);
+      return next;
+    });
+  }, []);
+
+  // Auto-scroll del chat
   useEffect(() => {
     chatEndRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [messages]);
 
+  // Recuperar documento del localStorage al montar
+  useEffect(() => {
+    try {
+      const raw = localStorage.getItem("docagent-document");
+      if (!raw) return;
+      const stored = JSON.parse(raw) as StoredDocument;
+      if (stored && stored.id && stored.content && stored.analysis) {
+        setDoc({
+          phase: "ready",
+          docId: stored.id,
+          filename: stored.filename,
+          analysis: stored.analysis,
+          document: stored,
+        });
+      }
+    } catch (err) {
+      console.warn("[docagent] localStorage corrupto, ignorando:", err);
+    }
+  }, []);
+
   const handleFile = useCallback(async (file: File) => {
     setDoc({ phase: "analyzing", filename: file.name });
     setMessages([]);
+    const start = Date.now();
 
     try {
       const formData = new FormData();
@@ -54,38 +99,40 @@ export default function Home() {
         docId: data.docId,
         filename: file.name,
         analysis: data.analysis,
+        document: data.document,
         warning: data.warning,
+        elapsedMs: Date.now() - start,
       });
+
+      try {
+        localStorage.setItem("docagent-document", JSON.stringify(data.document));
+      } catch (storageErr) {
+        console.warn("[docagent] no se pudo guardar en localStorage:", storageErr);
+      }
     } catch (err) {
       const message = err instanceof Error ? err.message : "Error de red";
       setDoc({ phase: "error", error: message });
     }
   }, []);
 
-  const onDrop = useCallback(
-    (e: React.DragEvent) => {
-      e.preventDefault();
-      const file = e.dataTransfer.files[0];
-      if (file) handleFile(file);
-    },
-    [handleFile]
-  );
+  const onDrop = useCallback((e: React.DragEvent) => {
+    e.preventDefault();
+    const file = e.dataTransfer.files[0];
+    if (file) handleFile(file);
+  }, [handleFile]);
 
-  const onFileChange = useCallback(
-    (e: React.ChangeEvent<HTMLInputElement>) => {
-      const file = e.target.files?.[0];
-      if (file) handleFile(file);
-    },
-    [handleFile]
-  );
+  const onFileChange = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (file) handleFile(file);
+  }, [handleFile]);
 
   const sendMessage = useCallback(async () => {
     if (!input.trim() || doc.phase !== "ready" || chatLoading) return;
     const userText = input.trim();
     setInput("");
 
-    const nextMessages: ChatMessage[] = [...messages, { role: "user", content: userText }];
-    setMessages(nextMessages);
+    const newMessages: ChatMessage[] = [...messages, { role: "user", content: userText }];
+    setMessages(newMessages);
     setChatLoading(true);
     setMessages((prev) => [...prev, { role: "assistant", content: "" }]);
 
@@ -94,8 +141,8 @@ export default function Home() {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          docId: doc.docId,
-          messages: nextMessages.map((message) => ({ role: message.role, content: message.content })),
+          document: doc.phase === "ready" ? doc.document : null,
+          messages: newMessages.map((m) => ({ role: m.role, content: m.content })),
         }),
       });
 
@@ -103,7 +150,7 @@ export default function Home() {
         const errText = await res.text().catch(() => "Error en el chat");
         setMessages((prev) => {
           const copy = [...prev];
-          copy[copy.length - 1] = { role: "assistant", content: `❌ ${errText}` };
+          copy[copy.length - 1] = { role: "assistant", content: `⚠ ${errText}` };
           return copy;
         });
         return;
@@ -127,7 +174,7 @@ export default function Home() {
       const message = err instanceof Error ? err.message : "Error de red";
       setMessages((prev) => {
         const copy = [...prev];
-        copy[copy.length - 1] = { role: "assistant", content: `❌ ${message}` };
+        copy[copy.length - 1] = { role: "assistant", content: `⚠ ${message}` };
         return copy;
       });
     } finally {
@@ -140,274 +187,236 @@ export default function Home() {
     setMessages([]);
     setInput("");
     if (fileInputRef.current) fileInputRef.current.value = "";
+    try { localStorage.removeItem("docagent-document"); } catch {}
   }, []);
 
+  const isReady = doc.phase === "ready";
+
   return (
-    <div className="min-h-screen bg-[radial-gradient(circle_at_top_left,_rgba(99,102,241,0.14),_transparent_30%),radial-gradient(circle_at_top_right,_rgba(14,165,233,0.12),_transparent_24%),linear-gradient(180deg,_#f8fafc_0%,_#eef2ff_100%)] text-slate-900">
-      <header className="sticky top-0 z-10 border-b border-white/60 bg-white/75 backdrop-blur-xl">
-        <div className="mx-auto flex max-w-7xl items-center justify-between px-6 py-4">
-          <div className="flex items-center gap-3">
-            <div className="flex h-10 w-10 items-center justify-center rounded-2xl bg-gradient-to-br from-indigo-600 via-violet-600 to-sky-500 text-sm font-bold text-white shadow-lg shadow-indigo-200/60">
-              D
-            </div>
-            <div>
-              <h1 className="text-lg font-semibold tracking-tight">DocAgent</h1>
-              <p className="text-xs text-slate-500">Análisis de documentos y chat en tiempo real</p>
-            </div>
-          </div>
-          <div className="flex items-center gap-2 text-xs text-slate-500">
-            <span className="rounded-full bg-slate-100 px-2.5 py-1">Mastra</span>
-            <span className="rounded-full bg-slate-100 px-2.5 py-1">Groq Llama 3.3 70B</span>
-          </div>
+    <div className="min-h-screen flex flex-col" style={{ background: "var(--c-bg)" }}>
+      {/* TOP BAR */}
+      <header
+        className="flex items-center px-4 sm:px-7 flex-shrink-0"
+        style={{ height: 56, borderBottom: "1px solid var(--c-border)", background: "var(--c-bg)" }}
+      >
+        <div className="flex items-center gap-3 sm:gap-5 flex-1 min-w-0">
+          <Wordmark />
+          <span className="font-mono hidden sm:inline" style={{ fontSize: 11, color: "var(--c-text-faint)", letterSpacing: "0.04em" }}>
+            v0.1 — beta
+          </span>
+        </div>
+
+        <div className="flex items-center gap-3 sm:gap-5 flex-shrink-0">
+          {isReady && (
+            <>
+              <span
+                className="font-mono hidden md:inline-flex items-center gap-2 truncate max-w-[200px]"
+                style={{ fontSize: 11.5, color: "var(--c-text-soft)", letterSpacing: "0.02em" }}
+              >
+                <span style={{ color: "var(--c-text-faint)" }}>›</span>
+                <span className="truncate">{doc.filename}</span>
+              </span>
+              <span className="hidden md:inline" style={{ width: 1, height: 18, background: "var(--c-border)" }} />
+            </>
+          )}
+          <span
+            className="font-mono hidden sm:inline-flex items-center gap-2"
+            style={{ fontSize: 10.5, color: "var(--c-text-muted)", letterSpacing: "0.05em" }}
+          >
+            <span style={{ width: 6, height: 6, background: "var(--c-online)", display: "inline-block" }} />
+            llama 3.3 70b
+          </span>
+          <button
+            onClick={toggleTheme}
+            aria-label="Toggle theme"
+            className="inline-flex items-center justify-center transition-colors"
+            style={{ width: 30, height: 30, border: "1px solid var(--c-border)", background: "transparent", color: "var(--c-text-muted)" }}
+          >
+            {theme === "dark" ? <MoonIcon /> : <SunIcon />}
+          </button>
         </div>
       </header>
 
-      <main className="mx-auto grid min-h-[calc(100vh-73px)] max-w-7xl grid-cols-1 gap-6 px-6 py-6 lg:grid-cols-2">
-        <section className="overflow-hidden rounded-[1.75rem] border border-white/70 bg-white/85 shadow-[0_20px_60px_-25px_rgba(15,23,42,0.3)] backdrop-blur-sm">
-          {doc.phase === "empty" && (
-            <DropZone
-              onDrop={onDrop}
-              onClick={() => fileInputRef.current?.click()}
-            />
-          )}
-
-          {doc.phase === "analyzing" && (
-            <div className="flex min-h-[480px] flex-col items-center justify-center gap-5 p-8">
-              <div className="h-14 w-14 animate-spin rounded-full border-4 border-indigo-200 border-t-indigo-600" />
-              <div className="text-center">
-                <p className="text-lg font-medium">Analizando documento</p>
-                <p className="mt-2 text-sm text-slate-500">{doc.filename}</p>
-              </div>
-            </div>
-          )}
-
-          {doc.phase === "error" && (
-            <div className="flex min-h-[480px] flex-col items-center justify-center gap-4 p-8 text-center">
-              <div className="text-5xl">⚠️</div>
-              <div className="max-w-md">
-                <p className="font-medium text-red-600">Error al procesar</p>
-                <p className="mt-2 text-sm text-slate-600">{doc.error}</p>
-              </div>
-              <button
-                onClick={reset}
-                className="rounded-xl bg-slate-900 px-4 py-2 text-sm font-medium text-white transition hover:bg-slate-800"
-              >
-                Intentar de nuevo
-              </button>
-            </div>
-          )}
-
-          {doc.phase === "ready" && <AnalysisPanel doc={doc} onReset={reset} />}
-
-          <input
-            ref={fileInputRef}
-            type="file"
-            accept=".pdf,.txt,.md,application/pdf,text/plain"
-            className="hidden"
-            onChange={onFileChange}
-          />
-        </section>
-
-        <section className="overflow-hidden rounded-[1.75rem] border border-white/70 bg-white/85 shadow-[0_20px_60px_-25px_rgba(15,23,42,0.3)] backdrop-blur-sm">
-          <div className="flex items-center gap-2 border-b border-slate-200 px-5 py-4">
-            <span className="text-sm font-medium">Chat</span>
-            {doc.phase === "ready" && <span className="text-xs text-slate-400">· sobre {doc.filename}</span>}
-          </div>
-
-          <div className="flex h-[calc(100vh-73px-193px)] min-h-[420px] flex-col">
-            <div className="flex-1 overflow-y-auto px-5 py-4">
-              {messages.length === 0 ? (
-                <div className="flex h-full items-center justify-center px-6 text-center text-sm text-slate-400">
-                  {doc.phase === "ready"
-                    ? "Hazme una pregunta sobre el documento. Prueba: \"¿Cuál fue el crecimiento de ventas?\""
-                    : "Sube un documento para empezar a chatear."}
-                </div>
-              ) : (
-                <div className="space-y-4">
-                  {messages.map((message, index) => (
-                    <MessageBubble
-                      key={index}
-                      role={message.role}
-                      content={message.content}
-                      streaming={chatLoading && index === messages.length - 1}
-                    />
-                  ))}
-                </div>
-              )}
-              <div ref={chatEndRef} />
-            </div>
-
-            <div className="border-t border-slate-200 p-3">
-              <div className="flex gap-2">
-                <input
-                  type="text"
-                  value={input}
-                  onChange={(e) => setInput(e.target.value)}
-                  onKeyDown={(e) => {
-                    if (e.key === "Enter" && !e.shiftKey) {
-                      e.preventDefault();
-                      void sendMessage();
-                    }
-                  }}
-                  placeholder={doc.phase === "ready" ? "Escribe tu pregunta..." : "Primero sube un documento"}
-                  disabled={doc.phase !== "ready" || chatLoading}
-                  className="flex-1 rounded-xl border border-slate-200 bg-white px-4 py-3 text-sm outline-none transition placeholder:text-slate-400 focus:border-indigo-500 focus:ring-4 focus:ring-indigo-100 disabled:bg-slate-50 disabled:text-slate-400"
-                />
-                <button
-                  onClick={() => void sendMessage()}
-                  disabled={doc.phase !== "ready" || chatLoading || !input.trim()}
-                  className="rounded-xl bg-indigo-600 px-4 py-3 text-sm font-medium text-white transition hover:bg-indigo-700 disabled:cursor-not-allowed disabled:bg-slate-300"
-                >
-                  {chatLoading ? "..." : "Enviar"}
-                </button>
-              </div>
-            </div>
-          </div>
-        </section>
-      </main>
-    </div>
-  );
-}
-
-function DropZone({
-  onDrop,
-  onClick,
-}: {
-  onDrop: (e: React.DragEvent) => void;
-  onClick: () => void;
-}) {
-  const [isDragging, setIsDragging] = useState(false);
-
-  return (
-    <button
-      type="button"
-      onClick={onClick}
-      onDragOver={(e) => {
-        e.preventDefault();
-        setIsDragging(true);
-      }}
-      onDragLeave={() => setIsDragging(false)}
-      onDrop={(e) => {
-        e.preventDefault();
-        setIsDragging(false);
-        onDrop(e);
-      }}
-      className={`flex min-h-[480px] w-full flex-col items-center justify-center gap-5 p-8 text-left transition ${
-        isDragging ? "bg-indigo-50/90" : "bg-transparent hover:bg-slate-50/70"
-      }`}
-    >
-      <div
-        className={`flex h-20 w-20 items-center justify-center rounded-3xl border text-4xl shadow-sm transition ${
-          isDragging
-            ? "border-indigo-300 bg-white text-indigo-600"
-            : "border-slate-200 bg-white text-slate-700"
-        }`}
-      >
-        📄
-      </div>
-      <div className="max-w-md text-center">
-        <h2 className="text-2xl font-semibold tracking-tight text-slate-900">Sube un documento</h2>
-        <p className="mt-3 text-sm leading-6 text-slate-500">
-          Arrastra y suelta un PDF, TXT o MD, o haz clic para abrir el selector.
+      {/* HERO */}
+      <section className="px-4 sm:px-7 flex-shrink-0" style={{ padding: "24px 28px 22px", borderBottom: "1px solid var(--c-border)", background: "var(--c-bg)" }}>
+        <div className="font-mono mb-2.5" style={{ fontSize: 10, color: "var(--c-text-faint)", textTransform: "uppercase", letterSpacing: "0.18em" }}>
+          document analysis · conversational agent
+        </div>
+        <h1 className="m-0" style={{ fontSize: 22, fontWeight: 500, letterSpacing: "-0.02em", lineHeight: 1.25, maxWidth: 720, color: "var(--c-text)" }}>
+          Sube un documento. Conversa con su contenido.
+        </h1>
+        <p className="mt-2 m-0" style={{ fontSize: 13, lineHeight: 1.5, color: "var(--c-text-muted)", maxWidth: 540 }}>
+          Workflow tipado de Mastra → análisis estructurado → agente conversacional con streaming.
         </p>
-      </div>
-      <div className="rounded-full bg-slate-100 px-3 py-1 text-xs text-slate-500">
-        PDF, TXT, MD · análisis y chat en una sola vista
-      </div>
-    </button>
+      </section>
+
+      {/* MAIN GRID — responsive */}
+      <main className="flex-1 grid min-h-0">
+        {/* Pequeño: doc arriba, chat abajo */}
+        <div className="lg:hidden flex flex-col">
+          <DocPanel doc={doc} onReset={reset} fileInputRef={fileInputRef} onDrop={onDrop} />
+          <div className="flex-1 flex flex-col min-h-[420px]" style={{ borderTop: "1px solid var(--c-border)" }}>
+            <ChatPanel
+              messages={messages}
+              chatLoading={chatLoading}
+              input={input}
+              setInput={setInput}
+              sendMessage={sendMessage}
+              isReady={isReady}
+              chatEndRef={chatEndRef}
+            />
+          </div>
+        </div>
+
+        {/* Grande: chat | doc */}
+        <div className="hidden lg:grid lg:grid-cols-[1fr_360px] lg:min-h-0 lg:h-full" style={{ minHeight: 0 }}>
+          <ChatPanel
+            messages={messages}
+            chatLoading={chatLoading}
+            input={input}
+            setInput={setInput}
+            sendMessage={sendMessage}
+            isReady={isReady}
+            chatEndRef={chatEndRef}
+          />
+          <div style={{ borderLeft: "1px solid var(--c-border)" }}>
+            <DocPanel doc={doc} onReset={reset} fileInputRef={fileInputRef} onDrop={onDrop} />
+          </div>
+        </div>
+      </main>
+
+      {/* File input invisible global */}
+      <input
+        ref={fileInputRef}
+        type="file"
+        accept=".pdf,.txt,.md,application/pdf,text/plain"
+        className="hidden"
+        onChange={onFileChange}
+      />
+    </div>
   );
 }
 
-function AnalysisPanel({
-  doc,
-  onReset,
-}: {
-  doc: Extract<DocState, { phase: "ready" }>;
-  onReset: () => void;
-}) {
-  const { filename, analysis, warning } = doc;
+// ─── ChatPanel ────────────────────────────────────────────────────────────
 
+function ChatPanel({
+  messages, chatLoading, input, setInput, sendMessage, isReady, chatEndRef,
+}: {
+  messages: ChatMessage[];
+  chatLoading: boolean;
+  input: string;
+  setInput: (v: string) => void;
+  sendMessage: () => void;
+  isReady: boolean;
+  chatEndRef: React.RefObject<HTMLDivElement | null>;
+}) {
   return (
-    <div className="flex h-full flex-col">
-      <div className="flex items-center justify-between gap-4 border-b border-slate-200 px-5 py-4">
-        <div className="min-w-0">
-          <p className="truncate text-sm font-medium text-slate-900">{filename}</p>
-          <p className="text-xs text-slate-500">Documento analizado correctamente</p>
-        </div>
-        <button onClick={onReset} className="text-xs font-medium text-slate-500 transition hover:text-slate-900">
-          Cambiar documento
-        </button>
+    <div className="flex flex-col min-w-0 min-h-0 flex-1">
+      <div
+        className="flex items-center gap-3.5 px-4 sm:px-7 flex-shrink-0"
+        style={{ height: 42, borderBottom: "1px solid var(--c-border-faint)" }}
+      >
+        <span className="font-mono" style={{ fontSize: 10, color: "var(--c-text-faint)", letterSpacing: "0.12em", textTransform: "uppercase" }}>02</span>
+        <span style={{ width: 14, height: 1, background: "var(--c-text-faint)" }} />
+        <span className="font-mono" style={{ fontSize: 12, color: "var(--c-text-soft)", letterSpacing: "0.02em" }}>conversation</span>
+        <span className="font-mono ml-auto" style={{ fontSize: 11, color: "var(--c-text-muted)", letterSpacing: "0.04em" }}>
+          {messages.filter((m) => m.role === "user").length} turns
+        </span>
       </div>
 
-      <div className="flex-1 overflow-y-auto p-5">
-        <div className="space-y-5">
-          {warning && (
-            <div className="rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3 text-xs text-amber-800">
-              ⚠ {warning}
+      <div className="flex-1 overflow-y-auto min-h-0" style={{ padding: "28px 20px" }}>
+        <div className="flex flex-col gap-7 max-w-3xl mx-auto px-2 sm:px-4">
+          {messages.length === 0 && (
+            <div className="text-center" style={{ padding: "40px 20px", color: "var(--c-text-faint)", fontSize: 13, lineHeight: 1.6 }}>
+              {isReady
+                ? "Hazme una pregunta sobre el documento. Por ejemplo: \"dame un resumen\" o \"¿qué cifra concreta aparece?\""
+                : "Sube un documento para empezar."}
             </div>
           )}
+          {messages.map((m, i) => (
+            <MessageBlock
+              key={i}
+              role={m.role}
+              content={m.content}
+              streaming={chatLoading && i === messages.length - 1}
+            />
+          ))}
+          <div ref={chatEndRef} />
+        </div>
+      </div>
 
-          <div className="flex flex-wrap gap-2">
-            <Badge label="Tipo" value={analysis.documentType} />
-            <Badge label="Idioma" value={analysis.language.toUpperCase()} />
-            <Badge label="Palabras" value={analysis.wordCount.toLocaleString()} />
-          </div>
-
-          <div className="rounded-2xl border border-slate-200 bg-slate-50/80 p-4">
-            <h3 className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-500">Resumen</h3>
-            <p className="mt-3 text-sm leading-7 text-slate-700">{analysis.summary}</p>
-          </div>
-
-          <div className="rounded-2xl border border-slate-200 bg-white p-4">
-            <h3 className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-500">Puntos clave</h3>
-            <ul className="mt-3 space-y-3">
-              {analysis.keyPoints.map((point, index) => (
-                <li key={index} className="flex gap-3 text-sm leading-6 text-slate-700">
-                  <span className="mt-2 h-1.5 w-1.5 shrink-0 rounded-full bg-indigo-500" />
-                  <span>{point}</span>
-                </li>
-              ))}
-            </ul>
-          </div>
+      <div className="flex-shrink-0" style={{ padding: "18px 20px 20px", borderTop: "1px solid var(--c-border-faint)", background: "var(--c-bg-deep)" }}>
+        <div
+          className="flex gap-3 items-stretch max-w-3xl mx-auto"
+          style={{ border: "1px solid var(--c-border)", padding: "10px 14px", background: "var(--c-bg)" }}
+        >
+          <span className="font-mono self-center" style={{ fontSize: 14, color: "var(--c-text-faint)" }}>›</span>
+          <input
+            type="text"
+            value={input}
+            onChange={(e) => setInput(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === "Enter" && !e.shiftKey) {
+                e.preventDefault();
+                sendMessage();
+              }
+            }}
+            placeholder={isReady ? "ask about the document..." : "upload a document first"}
+            disabled={!isReady || chatLoading}
+            className="font-mono flex-1 bg-transparent border-0 outline-none disabled:opacity-50"
+            style={{ color: "var(--c-text)", fontSize: 13.5, letterSpacing: "0.01em" }}
+          />
+          <span
+            className="font-mono self-center hidden sm:inline-block"
+            style={{ fontSize: 10, padding: "2px 8px", border: "1px solid var(--c-border-faint)", letterSpacing: "0.05em", color: "var(--c-text-faint)" }}
+          >
+            ↵ ENTER
+          </span>
+          <button
+            onClick={sendMessage}
+            disabled={!isReady || chatLoading || !input.trim()}
+            className="font-mono disabled:opacity-40 disabled:cursor-not-allowed transition-opacity"
+            style={{
+              border: "1px solid var(--c-accent)",
+              background: "var(--c-accent)",
+              color: "var(--c-accent-text)",
+              padding: "0 18px",
+              fontSize: 11,
+              letterSpacing: "0.06em",
+              textTransform: "uppercase",
+              fontWeight: 500,
+            }}
+          >
+            {chatLoading ? "..." : "SEND"}
+          </button>
+        </div>
+        <div className="font-mono mt-2.5 max-w-3xl mx-auto" style={{ fontSize: 10, color: "var(--c-text-faint)", letterSpacing: "0.04em" }}>
+          agent uses get-analysis + search-document tools · responses stream in real time
         </div>
       </div>
     </div>
   );
 }
 
-function Badge({ label, value }: { label: string; value: string }) {
+function MessageBlock({ role, content, streaming }: { role: "user" | "assistant"; content: string; streaming: boolean }) {
+  const label = role === "user" ? "YOU" : "AGT";
+  const colorVar = role === "user" ? "var(--c-text)" : "var(--c-text-soft)";
   return (
-    <div className="rounded-full border border-slate-200 bg-white px-3 py-1.5 text-xs shadow-sm">
-      <span className="text-slate-500">{label}: </span>
-      <span className="font-medium text-slate-900">{value}</span>
-    </div>
-  );
-}
-
-function MessageBubble({
-  role,
-  content,
-  streaming,
-}: {
-  role: "user" | "assistant";
-  content: string;
-  streaming: boolean;
-}) {
-  const isUser = role === "user";
-
-  return (
-    <div className={`flex ${isUser ? "justify-end" : "justify-start"}`}>
-      <div
-        className={`max-w-[85%] rounded-2xl px-4 py-3 text-sm leading-6 whitespace-pre-wrap shadow-sm ${
-          isUser
-            ? "rounded-br-md bg-indigo-600 text-white"
-            : "rounded-bl-md border border-slate-200 bg-white text-slate-900"
-        }`}
+    <div className="flex gap-3.5">
+      <span
+        className="font-mono flex-shrink-0"
+        style={{ fontSize: 10, color: "var(--c-text-faint)", letterSpacing: "0.1em", paddingTop: 4, minWidth: 32 }}
       >
-        {content || (streaming ? <TypingDots /> : null)}
-        {streaming && content ? (
-          <span className="ml-1 inline-block h-4 w-1.5 animate-pulse rounded-sm bg-slate-400 align-middle" />
-        ) : null}
+        {label}
+      </span>
+      <div className="flex-1 whitespace-pre-wrap break-words" style={{ fontSize: 14.5, lineHeight: 1.7, color: colorVar }}>
+        {content || (streaming && <TypingDots />)}
+        {streaming && content && (
+          <span
+            className="inline-block align-text-bottom ml-0.5"
+            style={{ width: 7, height: 14, background: "var(--c-text)", animation: "cursor-blink 1s infinite" }}
+          />
+        )}
       </div>
     </div>
   );
@@ -415,10 +424,268 @@ function MessageBubble({
 
 function TypingDots() {
   return (
-    <span className="inline-flex items-center gap-1.5">
-      <span className="h-1.5 w-1.5 animate-bounce rounded-full bg-slate-400" style={{ animationDelay: "0ms" }} />
-      <span className="h-1.5 w-1.5 animate-bounce rounded-full bg-slate-400" style={{ animationDelay: "150ms" }} />
-      <span className="h-1.5 w-1.5 animate-bounce rounded-full bg-slate-400" style={{ animationDelay: "300ms" }} />
+    <span className="inline-flex gap-1">
+      {[0, 150, 300].map((delay) => (
+        <span
+          key={delay}
+          className="inline-block"
+          style={{
+            width: 5,
+            height: 5,
+            background: "var(--c-text-muted)",
+            animation: "typing-bounce 1.2s infinite ease-in-out",
+            animationDelay: `${delay}ms`,
+          }}
+        />
+      ))}
     </span>
+  );
+}
+
+// ─── DocPanel ─────────────────────────────────────────────────────────────
+
+function DocPanel({
+  doc, onReset, fileInputRef, onDrop,
+}: {
+  doc: DocState;
+  onReset: () => void;
+  fileInputRef: React.RefObject<HTMLInputElement | null>;
+  onDrop: (e: React.DragEvent) => void;
+}) {
+  return (
+    <div className="flex flex-col h-full min-h-0" style={{ background: "var(--c-bg-elev)" }}>
+      <div className="flex items-center gap-3.5 px-5 flex-shrink-0" style={{ height: 42, borderBottom: "1px solid var(--c-border-faint)" }}>
+        <span className="font-mono" style={{ fontSize: 10, color: "var(--c-text-faint)", letterSpacing: "0.12em", textTransform: "uppercase" }}>01</span>
+        <span style={{ width: 14, height: 1, background: "var(--c-text-faint)" }} />
+        <span className="font-mono" style={{ fontSize: 12, color: "var(--c-text-soft)", letterSpacing: "0.02em" }}>document</span>
+        {doc.phase === "ready" && (
+          <button
+            onClick={onReset}
+            className="font-mono ml-auto transition-colors"
+            style={{
+              border: "1px solid var(--c-border)",
+              background: "transparent",
+              color: "var(--c-text-muted)",
+              padding: "4px 11px",
+              fontSize: 10.5,
+              letterSpacing: "0.05em",
+              textTransform: "lowercase",
+            }}
+          >
+            change
+          </button>
+        )}
+      </div>
+
+      <div className="flex-1 overflow-y-auto min-h-0">
+        {doc.phase === "empty" && <DropZone fileInputRef={fileInputRef} onDrop={onDrop} />}
+        {doc.phase === "analyzing" && <AnalyzingState filename={doc.filename} />}
+        {doc.phase === "error" && <ErrorState error={doc.error} onReset={onReset} />}
+        {doc.phase === "ready" && <AnalysisView doc={doc} />}
+      </div>
+    </div>
+  );
+}
+
+function DropZone({ fileInputRef, onDrop }: { fileInputRef: React.RefObject<HTMLInputElement | null>; onDrop: (e: React.DragEvent) => void; }) {
+  const [isDragging, setIsDragging] = useState(false);
+  return (
+    <div
+      onClick={() => fileInputRef.current?.click()}
+      onDragOver={(e) => { e.preventDefault(); setIsDragging(true); }}
+      onDragLeave={() => setIsDragging(false)}
+      onDrop={(e) => { setIsDragging(false); onDrop(e); }}
+      className="flex flex-col items-center justify-center cursor-pointer m-5 transition-colors"
+      style={{
+        border: `1px dashed ${isDragging ? "var(--c-text-muted)" : "var(--c-border)"}`,
+        background: isDragging ? "var(--c-bg-hover)" : "transparent",
+        padding: 40,
+        minHeight: 240,
+      }}
+    >
+      <div className="font-mono" style={{ fontSize: 11, color: "var(--c-text-faint)", letterSpacing: "0.12em", textTransform: "uppercase", marginBottom: 14 }}>
+        upload
+      </div>
+      <p style={{ fontSize: 14, fontWeight: 500, margin: 0, color: "var(--c-text)" }}>Sube un documento</p>
+      <p className="font-mono" style={{ fontSize: 11, marginTop: 6, color: "var(--c-text-muted)", letterSpacing: "0.04em" }}>
+        drag · click · pdf, txt, md
+      </p>
+    </div>
+  );
+}
+
+function AnalyzingState({ filename }: { filename: string }) {
+  return (
+    <div className="flex flex-col items-center justify-center text-center" style={{ padding: 40, gap: 14, minHeight: 280 }}>
+      <div style={{ width: 22, height: 22, border: "2px solid var(--c-border)", borderTopColor: "var(--c-text)", animation: "spin 0.8s linear infinite", borderRadius: "50%" }} />
+      <div className="font-mono" style={{ fontSize: 10, color: "var(--c-text-faint)", letterSpacing: "0.12em", textTransform: "uppercase", marginTop: 6 }}>
+        analyzing…
+      </div>
+      <div className="font-mono break-all" style={{ fontSize: 12, color: "var(--c-text-muted)" }}>{filename}</div>
+    </div>
+  );
+}
+
+function ErrorState({ error, onReset }: { error: string; onReset: () => void }) {
+  return (
+    <div className="flex flex-col items-center justify-center text-center" style={{ padding: 40, gap: 14, minHeight: 280 }}>
+      <div className="font-mono" style={{ fontSize: 10, letterSpacing: "0.12em", textTransform: "uppercase", color: "var(--c-error)" }}>error</div>
+      <div className="break-words max-w-[260px]" style={{ fontSize: 13, color: "var(--c-text-soft)", lineHeight: 1.5 }}>{error}</div>
+      <button
+        onClick={onReset}
+        className="font-mono mt-2"
+        style={{
+          border: "1px solid var(--c-accent)",
+          background: "var(--c-accent)",
+          color: "var(--c-accent-text)",
+          padding: "8px 16px",
+          fontSize: 10.5,
+          letterSpacing: "0.06em",
+          textTransform: "uppercase",
+        }}
+      >
+        retry
+      </button>
+    </div>
+  );
+}
+
+function AnalysisView({ doc }: { doc: Extract<DocState, { phase: "ready" }> }) {
+  const { filename, analysis, warning, elapsedMs } = doc;
+  const elapsed = elapsedMs ? `${(elapsedMs / 1000).toFixed(1)}s` : "—";
+  const ext = filename.split(".").pop() ?? "txt";
+
+  return (
+    <div className="flex flex-col h-full">
+      {warning && (
+        <div
+          className="font-mono mx-5 mt-4"
+          style={{ fontSize: 11, padding: "8px 11px", border: "1px solid var(--c-border)", color: "var(--c-warning)", background: "var(--c-bg-hover)" }}
+        >
+          ⚠ {warning}
+        </div>
+      )}
+
+      <div style={{ padding: "20px 22px 8px" }}>
+        <div className="flex gap-3.5 items-start">
+          <div
+            className="font-mono text-right flex-shrink-0"
+            style={{ fontSize: 11, color: "var(--c-text-muted)", paddingTop: 2, lineHeight: 1.4, minWidth: 36 }}
+          >
+            .{ext}<br />
+            <span style={{ color: "var(--c-text-faint)" }}>{analysis.wordCount}w</span>
+          </div>
+          <div className="flex-1 min-w-0">
+            <div className="break-words" style={{ fontSize: 14.5, fontWeight: 500, lineHeight: 1.35, letterSpacing: "-0.01em", color: "var(--c-text)" }}>
+              {filename}
+            </div>
+            <div className="font-mono" style={{ fontSize: 10.5, marginTop: 4, color: "var(--c-text-muted)", letterSpacing: "0.04em" }}>
+              uploaded · processed in {elapsed}
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div className="flex flex-wrap gap-1.5" style={{ padding: "16px 22px 22px" }}>
+        <Tag>{analysis.documentType}</Tag>
+        <Tag>{analysis.language}</Tag>
+      </div>
+
+      <div style={{ height: 1, background: "var(--c-text-faint)", margin: "0 22px" }} />
+
+      <div style={{ padding: "22px 22px 4px" }}>
+        <div className="eyebrow" style={{ marginBottom: 12 }}>Fig 1 · Summary</div>
+        <p className="m-0" style={{ fontSize: 13, lineHeight: 1.65, color: "var(--c-text-soft)" }}>
+          {analysis.summary}
+        </p>
+      </div>
+
+      <div style={{ padding: "24px 22px 16px" }}>
+        <div className="eyebrow" style={{ marginBottom: 14 }}>Fig 2 · Key points</div>
+        <ol className="list-none m-0 p-0 flex flex-col" style={{ gap: 10 }}>
+          {analysis.keyPoints.map((point, i) => (
+            <li key={i} className="flex" style={{ gap: 14, fontSize: 12.5, lineHeight: 1.55 }}>
+              <span className="font-mono flex-shrink-0" style={{ fontSize: 10, color: "var(--c-text-faint)", letterSpacing: "0.05em", minWidth: 18 }}>
+                {String(i + 1).padStart(2, "0")}
+              </span>
+              <span style={{ color: "var(--c-text-soft)" }}>{point}</span>
+            </li>
+          ))}
+        </ol>
+      </div>
+
+      <div className="mt-auto flex flex-col" style={{ padding: "14px 22px 16px", borderTop: "1px solid var(--c-border-faint)", gap: 4 }}>
+        <KV k="workflow.status" v="ok" />
+        <KV k="workflow.elapsed" v={elapsed} />
+        <KV k="workflow.steps" v="2" />
+      </div>
+    </div>
+  );
+}
+
+function Tag({ children }: { children: React.ReactNode }) {
+  return (
+    <span
+      className="font-mono inline-block"
+      style={{
+        border: "1px solid var(--c-border)",
+        padding: "3px 9px",
+        fontSize: 10.5,
+        color: "var(--c-text-muted)",
+        textTransform: "lowercase",
+        letterSpacing: "0.04em",
+      }}
+    >
+      {children}
+    </span>
+  );
+}
+
+function KV({ k, v }: { k: string; v: string }) {
+  return (
+    <div className="flex justify-between">
+      <span className="font-mono" style={{ fontSize: 10, color: "var(--c-text-faint)", letterSpacing: "0.05em" }}>{k}</span>
+      <span className="font-mono" style={{ fontSize: 10, color: "var(--c-text-soft)", letterSpacing: "0.05em" }}>{v}</span>
+    </div>
+  );
+}
+
+// ─── Wordmark + Icons ─────────────────────────────────────────────────────
+
+function Wordmark() {
+  return (
+    <svg width="98" height="16" viewBox="0 0 98 16" fill="none" aria-label="docagent" style={{ flexShrink: 0 }}>
+      <rect x="0" y="0" width="14" height="16" fill="var(--c-text)" />
+      <rect x="3" y="3" width="8" height="10" fill="var(--c-bg)" />
+      <rect x="6" y="6" width="5" height="4" fill="var(--c-text)" />
+      <rect x="20" y="0" width="14" height="16" fill="var(--c-text)" />
+      <rect x="23" y="3" width="8" height="10" fill="var(--c-bg)" />
+      <rect x="20" y="6" width="14" height="3" fill="var(--c-text)" />
+      <rect x="40" y="13" width="12" height="3" fill="var(--c-text-faint)" />
+      <rect x="58" y="0" width="3" height="16" fill="var(--c-text)" />
+      <rect x="68" y="0" width="3" height="3" fill="var(--c-text-muted)" />
+      <rect x="73" y="0" width="3" height="3" fill="var(--c-text-muted)" />
+      <rect x="78" y="0" width="3" height="3" fill="var(--c-text-muted)" />
+      <rect x="68" y="13" width="3" height="3" fill="var(--c-text-muted)" />
+      <rect x="73" y="13" width="3" height="3" fill="var(--c-text-muted)" />
+      <rect x="78" y="13" width="3" height="3" fill="var(--c-text-muted)" />
+    </svg>
+  );
+}
+
+function MoonIcon() {
+  return (
+    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+      <path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z" />
+    </svg>
+  );
+}
+
+function SunIcon() {
+  return (
+    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+      <circle cx="12" cy="12" r="4" />
+      <path d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M6.34 17.66l-1.41 1.41M19.07 4.93l-1.41 1.41" />
+    </svg>
   );
 }

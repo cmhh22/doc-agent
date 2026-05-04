@@ -1,11 +1,10 @@
 import { mastra } from "@/mastra";
-import { docStore } from "@/mastra/store";
 import { NextResponse } from "next/server";
+import type { StoredDocument } from "@/mastra/store";
 
 export const runtime = "nodejs";
 export const maxDuration = 60;
 
-// Detecta el error intermitente de tool-calling de Groq
 function isToolCallingError(err: unknown): boolean {
   if (!(err instanceof Error)) return false;
   const msg = err.message.toLowerCase();
@@ -16,33 +15,61 @@ function isToolCallingError(err: unknown): boolean {
   );
 }
 
-async function streamFromAgent(messages: Array<{ role: string; content: string }>) {
-  const agent = mastra.getAgent("docChatAgent");
-  return agent.stream(messages);
+function isValidDocument(d: unknown): d is StoredDocument {
+  if (!d || typeof d !== "object") return false;
+  const doc = d as Record<string, unknown>;
+  return (
+    typeof doc.id === "string" &&
+    typeof doc.filename === "string" &&
+    typeof doc.content === "string" &&
+    typeof doc.analysis === "object" && doc.analysis !== null
+  );
 }
 
 export async function POST(req: Request) {
   try {
-    const { docId, messages } = await req.json();
+    const { document, messages } = await req.json();
 
-    if (!docId || typeof docId !== "string") {
-      return NextResponse.json({ error: "Falta docId." }, { status: 400 });
+    if (!isValidDocument(document)) {
+      return NextResponse.json(
+        { error: "Falta el documento o tiene formato inválido." },
+        { status: 400 }
+      );
     }
     if (!Array.isArray(messages) || messages.length === 0) {
       return NextResponse.json({ error: "Falta messages." }, { status: 400 });
     }
 
-    const doc = docStore.get(docId);
-    if (!doc) {
-      return NextResponse.json(
-        { error: "Documento no encontrado o expirado. Vuelve a subirlo." },
-        { status: 404 }
-      );
-    }
+    const doc = document as StoredDocument;
 
+    // El doc viene en el body. Lo inyectamos en el system message del agente.
     const systemMessage = {
       role: "system" as const,
-      content: `El documento activo tiene docId="${docId}" y filename="${doc.filename}". Cuando llames a tus tools (get-analysis, search-document), usa siempre ese docId exacto.`,
+      content: `Eres DocAgent, un asistente experto que ayuda al usuario a entender el documento que ha subido.
+
+DOCUMENTO ACTIVO
+- Nombre: ${doc.filename}
+- Tipo: ${doc.analysis.documentType}
+- Idioma: ${doc.analysis.language}
+- Palabras: ${doc.analysis.wordCount}
+
+RESUMEN PREGENERADO
+${doc.analysis.summary}
+
+PUNTOS CLAVE
+${doc.analysis.keyPoints.map((p, i) => `${i + 1}. ${p}`).join("\n")}
+
+CONTENIDO COMPLETO DEL DOCUMENTO
+"""
+${doc.content}
+"""
+
+REGLAS DE RESPUESTA
+- Responde en el mismo idioma del usuario (por defecto español).
+- Sé conciso y directo.
+- Para cifras concretas, fechas, nombres propios: cita el fragmento literal entre comillas.
+- Si una pregunta no tiene respuesta en el documento, dilo claramente sin inventar.
+- NUNCA inventes información que no esté en el documento.`,
     };
 
     const fullMessages = [systemMessage, ...messages];
@@ -52,19 +79,19 @@ export async function POST(req: Request) {
       async start(controller) {
         let attempt = 0;
         const MAX_ATTEMPTS = 2;
+        const agent = mastra.getAgent("docChatAgent");
 
         while (attempt < MAX_ATTEMPTS) {
           attempt++;
           try {
-            const stream = await streamFromAgent(fullMessages);
+            const stream = await agent.stream(fullMessages);
             for await (const chunk of stream.textStream) {
               controller.enqueue(encoder.encode(chunk));
             }
             controller.close();
-            return; // éxito
+            return;
           } catch (err) {
             console.error(`[chat stream] intento ${attempt} falló:`, err);
-
             if (err instanceof Error) {
               console.error("[chat stream] message:", err.message);
               if (err.cause) console.error("[chat stream] cause:", err.cause);
@@ -74,11 +101,9 @@ export async function POST(req: Request) {
             const isLastAttempt = attempt >= MAX_ATTEMPTS;
 
             if (!isRecoverable || isLastAttempt) {
-              // Mensaje legible al usuario en lugar de cortar el stream
               const fallbackMsg = isRecoverable
-                ? "⚠ Hubo un fallo temporal del modelo al usar herramientas. Intenta reformular tu pregunta o vuelve a enviarla."
+                ? "⚠ Hubo un fallo temporal del modelo. Intenta reformular tu pregunta."
                 : "⚠ Ha ocurrido un error inesperado. Por favor, intenta de nuevo.";
-
               try {
                 controller.enqueue(encoder.encode(fallbackMsg));
                 controller.close();
@@ -87,8 +112,6 @@ export async function POST(req: Request) {
               }
               return;
             }
-
-            // Si llegamos aquí, vamos al siguiente intento
             console.warn(`[chat stream] reintentando (${attempt}/${MAX_ATTEMPTS})...`);
           }
         }
