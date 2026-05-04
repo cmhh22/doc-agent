@@ -1,6 +1,6 @@
-// Almacén en memoria de documentos analizados.
-// Clave: docId (string). Valor: contenido + análisis del workflow.
-// En producción esto sería una BD; para el MVP basta con esto.
+// Tipos compartidos del documento. La persistencia ya no vive aquí —
+// se hace vía cookies httpOnly del navegador (ver app/api/analyze/route.ts y app/api/chat/route.ts).
+// Esta decisión mantiene la app stateless y compatible con Vercel serverless sin añadir BD.
 
 export type DocumentAnalysis = {
   summary: string;
@@ -17,15 +17,3 @@ export type StoredDocument = {
   analysis: DocumentAnalysis;
   createdAt: string;
 };
-
-// Singleton — sobrevive entre requests dentro del mismo proceso Node
-const globalForStore = globalThis as unknown as {
-  docStore: Map<string, StoredDocument> | undefined;
-};
-
-export const docStore: Map<string, StoredDocument> =
-  globalForStore.docStore ?? new Map<string, StoredDocument>();
-
-if (process.env.NODE_ENV !== "production") {
-  globalForStore.docStore = docStore;
-}

@@ -1,8 +1,8 @@
 import { mastra } from "@/mastra";
-import { docStore } from "@/mastra/store";
 import { extractFromBuffer } from "@/lib/extractText";
 import { NextResponse } from "next/server";
 import { randomUUID } from "node:crypto";
+import type { StoredDocument } from "@/mastra/store";
 
 export const runtime = "nodejs";
 export const maxDuration = 60;
@@ -10,30 +10,25 @@ export const maxDuration = 60;
 export async function POST(req: Request) {
   try {
     const contentType = req.headers.get("content-type") ?? "";
-
     let content: string;
     let filename: string;
     let warning: string | undefined;
 
     if (contentType.includes("multipart/form-data")) {
-      // Upload de archivo desde el navegador
       const formData = await req.formData();
       const file = formData.get("file");
-
       if (!file || !(file instanceof File)) {
         return NextResponse.json(
           { ok: false, error: "No se recibió un archivo válido en el campo 'file'." },
           { status: 400 }
         );
       }
-
       const buffer = Buffer.from(await file.arrayBuffer());
       const extracted = await extractFromBuffer(buffer, file.name, file.type);
       content = extracted.text;
       filename = extracted.filename;
       warning = extracted.warning;
     } else if (contentType.includes("application/json")) {
-      // Modo legacy: JSON con { content, filename } — útil para tests
       const body = await req.json();
       if (!body.content || typeof body.content !== "string") {
         return NextResponse.json(
@@ -50,15 +45,13 @@ export async function POST(req: Request) {
       );
     }
 
-    if (!content || typeof content !== "string" || content.trim().length === 0) {
+    if (content.trim().length === 0) {
       return NextResponse.json({ ok: false, error: "Contenido vacío." }, { status: 400 });
     }
 
     const workflow = mastra.getWorkflow("analyzeDocumentWorkflow");
     const run = await workflow.createRun();
-    const result = await run.start({
-      inputData: { content, filename },
-    });
+    const result = await run.start({ inputData: { content, filename } });
 
     if (result.status !== "success") {
       return NextResponse.json(
@@ -68,15 +61,23 @@ export async function POST(req: Request) {
     }
 
     const docId = randomUUID();
-    docStore.set(docId, {
+    const storedDoc: StoredDocument = {
       id: docId,
-      filename: filename ?? "documento.txt",
+      filename,
       content,
       analysis: result.result,
       createdAt: new Date().toISOString(),
-    });
+    };
 
-    return NextResponse.json({ ok: true, docId, analysis: result.result });
+    // Devolvemos el documento completo al cliente para que lo guarde en localStorage.
+    // El cliente lo enviará en el body de cada /api/chat.
+    return NextResponse.json({
+      ok: true,
+      docId,
+      analysis: result.result,
+      document: storedDoc,
+      ...(warning ? { warning } : {}),
+    });
   } catch (err: unknown) {
     const message = err instanceof Error ? err.message : String(err);
     console.error("[analyze] error:", message);

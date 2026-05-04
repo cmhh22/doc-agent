@@ -1,32 +1,29 @@
 import { createTool } from "@mastra/core/tools";
 import { z } from "zod";
-import { docStore } from "../store";
+
+// NOTA ARQUITECTÓNICA:
+// En este MVP el documento se inyecta directamente en el system message del agente
+// (ver app/api/chat/route.ts) para mantener la app stateless en Vercel serverless.
+// Las tools quedan registradas porque demuestran el patrón de orquestación de Mastra
+// y porque el agente puede seguir invocándolas con argumentos (devolverán "no disponible"
+// porque no hay store de servidor). En una versión futura con BD, estas tools leerían
+// del store real y todo seguiría funcionando sin cambiar el agente.
 
 export const getAnalysisTool = createTool({
   id: "get-analysis",
   description:
-    "Devuelve el análisis estructurado (resumen, tipo, puntos clave) de un documento ya procesado. Úsalo cuando el usuario pregunte por la visión general o el resumen.",
+    "Devuelve el análisis estructurado (resumen, tipo, puntos clave) de un documento ya procesado. En este MVP no hay store de servidor — usa el contexto del system message para responder.",
   inputSchema: z.object({
     docId: z.string().describe("ID del documento a consultar"),
   }),
   outputSchema: z.object({
     found: z.boolean(),
-    filename: z.string().optional(),
-    summary: z.string().optional(),
-    documentType: z.string().optional(),
-    keyPoints: z.array(z.string()).optional(),
-    wordCount: z.number().optional(),
+    note: z.string(),
   }),
-  execute: async ({ docId }) => {
-    const doc = docStore.get(docId);
-    if (!doc) return { found: false };
+  execute: async () => {
     return {
-      found: true,
-      filename: doc.filename,
-      summary: doc.analysis.summary,
-      documentType: doc.analysis.documentType,
-      keyPoints: doc.analysis.keyPoints,
-      wordCount: doc.analysis.wordCount,
+      found: false,
+      note: "El contenido y análisis del documento ya están en el system message. Responde directamente desde ahí.",
     };
   },
 });
@@ -34,43 +31,19 @@ export const getAnalysisTool = createTool({
 export const searchDocumentTool = createTool({
   id: "search-document",
   description:
-    "Busca un término o frase dentro del contenido completo del documento y devuelve los fragmentos donde aparece, con contexto. Úsalo cuando el usuario pregunte por algo específico que requiere consultar el texto literal.",
+    "Busca un término dentro del contenido del documento. En este MVP no hay store de servidor — usa el CONTENIDO COMPLETO DEL DOCUMENTO del system message para encontrar el fragmento.",
   inputSchema: z.object({
-    docId: z.string().describe("ID del documento donde buscar"),
-    query: z.string().describe("Término o frase a buscar (case-insensitive)"),
+    docId: z.string().describe("ID del documento"),
+    query: z.string().describe("Término a buscar"),
   }),
   outputSchema: z.object({
     found: z.boolean(),
-    matches: z.array(z.string()),
-    totalMatches: z.number(),
+    note: z.string(),
   }),
-  execute: async ({ docId, query }) => {
-    const doc = docStore.get(docId);
-    if (!doc) return { found: false, matches: [], totalMatches: 0 };
-
-    const content = doc.content;
-    const needle = query.toLowerCase();
-    const lowerContent = content.toLowerCase();
-    const matches: string[] = [];
-    let idx = 0;
-    let count = 0;
-
-    while (idx < content.length) {
-      const pos = lowerContent.indexOf(needle, idx);
-      if (pos === -1) break;
-      count++;
-      if (matches.length < 5) {
-        const start = Math.max(0, pos - 80);
-        const end = Math.min(content.length, pos + query.length + 80);
-        matches.push("..." + content.slice(start, end).replace(/\s+/g, " ").trim() + "...");
-      }
-      idx = pos + query.length;
-    }
-
+  execute: async () => {
     return {
-      found: count > 0,
-      matches,
-      totalMatches: count,
+      found: false,
+      note: "El contenido completo del documento ya está en tu system message. Busca el término ahí directamente.",
     };
   },
 });

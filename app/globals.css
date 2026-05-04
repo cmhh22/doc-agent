@@ -1,26 +1,144 @@
-@import "tailwindcss";
+﻿@import "tailwindcss";
 
-:root {
-  --background: #ffffff;
-  --foreground: #171717;
-}
+@layer base {
+  :root[data-theme="dark"] {
+    --c-bg: #14130f;
+    --c-bg-elev: #1a1815;
+    --c-bg-deep: #100f0d;
+    --c-bg-hover: #23211d;
+    --c-border: #2c2925;
+    --c-border-faint: #1f1d1a;
+    --c-text: #d8d3c8;
+    --c-text-soft: #b8b3a8;
+    --c-text-muted: #807a72;
+    --c-text-faint: #4a4640;
+    --c-accent: #d8d3c8;
+    --c-accent-text: #14130f;
+    --c-online: #6b9a7e;
+    --c-warning: #c89e6a;
+    --c-error: #c97a6a;
+  }
 
-@theme inline {
-  --color-background: var(--background);
-  --color-foreground: var(--foreground);
-  --font-sans: var(--font-geist-sans);
-  --font-mono: var(--font-geist-mono);
-}
+  :root[data-theme="light"] {
+    --c-bg: #ece6d8;
+    --c-bg-elev: #f1ebde;
+    --c-bg-deep: #e3ddcd;
+    --c-bg-hover: #ddd6c4;
+    --c-border: #2a2520;
+    --c-border-faint: #b8b1a0;
+    --c-text: #2a2520;
+    --c-text-soft: #4a4438;
+    --c-text-muted: #6b6558;
+    --c-text-faint: #95907f;
+    --c-accent: #2a2520;
+    --c-accent-text: #ece6d8;
+    --c-online: #4d7a5e;
+    --c-warning: #8a6428;
+    --c-error: #a04830;
+  }
 
-@media (prefers-color-scheme: dark) {
-  :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
+  html {
+    height: 100vh;
+  }
+
+  body {
+    background: var(--c-bg);
+    color: var(--c-text);
+    font-family: var(--font-sans), system-ui, -apple-system, sans-serif;
+    -webkit-font-smoothing: antialiased;
+    margin: 0;
+    height: 100vh;
+    overflow: hidden;
+  }
+
+  body > div {
+    height: 100vh;
+    overflow: hidden;
   }
 }
 
-body {
-  background: var(--background);
-  color: var(--foreground);
-  font-family: Arial, Helvetica, sans-serif;
+/* Utilidades */
+.font-mono { font-family: var(--font-mono), 'SF Mono', ui-monospace, monospace; }
+
+.ink {
+  font-family: var(--font-mono), 'SF Mono', ui-monospace, monospace;
+  font-weight: 500;
+  color: var(--c-text);
+  font-size: 0.94em;
+  border-bottom: 1px dashed var(--c-text-muted);
+  padding-bottom: 1px;
 }
+
+.eyebrow {
+  font-family: var(--font-mono), monospace;
+  font-size: 10px;
+  color: var(--c-text-faint);
+  text-transform: uppercase;
+  letter-spacing: 0.12em;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.eyebrow::before {
+  content: "";
+  width: 12px;
+  height: 1px;
+  background: var(--c-text-faint);
+  flex-shrink: 0;
+}
+
+/* ─── Scrollbars ocultos por defecto ─────────────────────────────────
+   En reposo: completamente invisibles
+   Al hacer hover sobre el panel scrolleable: aparecen sutiles
+   ──────────────────────────────────────────────────────────────────── */
+
+/* WebKit (Chrome, Edge, Safari) */
+::-webkit-scrollbar {
+  width: 0px;
+  height: 0px;
+  background: transparent;
+}
+
+/* Cuando el div con overflow está hovered, mostramos scrollbar */
+.overflow-y-auto:hover::-webkit-scrollbar,
+.overflow-x-auto:hover::-webkit-scrollbar,
+.overflow-auto:hover::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+
+.overflow-y-auto:hover::-webkit-scrollbar-thumb,
+.overflow-x-auto:hover::-webkit-scrollbar-thumb,
+.overflow-auto:hover::-webkit-scrollbar-thumb {
+  background: var(--c-border);
+  border-radius: 0;
+}
+
+.overflow-y-auto:hover::-webkit-scrollbar-thumb:hover,
+.overflow-x-auto:hover::-webkit-scrollbar-thumb:hover,
+.overflow-auto:hover::-webkit-scrollbar-thumb:hover {
+  background: var(--c-text-muted);
+}
+
+::-webkit-scrollbar-track,
+::-webkit-scrollbar-corner {
+  background: transparent;
+}
+
+/* Firefox */
+* {
+  scrollbar-width: none;
+}
+.overflow-y-auto:hover,
+.overflow-x-auto:hover,
+.overflow-auto:hover {
+  scrollbar-width: thin;
+  scrollbar-color: var(--c-border) transparent;
+}
+
+@keyframes cursor-blink { 0%, 50% { opacity: 1; } 51%, 100% { opacity: 0; } }
+@keyframes typing-bounce {
+  0%, 80%, 100% { transform: scale(0.6); opacity: 0.5; }
+  40% { transform: scale(1); opacity: 1; }
+}
+@keyframes spin { to { transform: rotate(360deg); } }

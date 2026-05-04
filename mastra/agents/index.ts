@@ -1,5 +1,10 @@
 import { Agent } from "@mastra/core/agent";
+import { createOpenRouter } from "@openrouter/ai-sdk-provider";
 import { getAnalysisTool, searchDocumentTool } from "../tools";
+
+const openrouter = createOpenRouter({
+  apiKey: process.env.OPENROUTER_API_KEY,
+});
 
 export const docChatAgent = new Agent({
 	id: "doc-chat-agent",
@@ -20,6 +25,6 @@ Reglas de respuesta:
 - NUNCA inventes información que no esté en el documento o en el análisis.
 
 El docId del documento activo te llegará al inicio de la conversación como mensaje system.`,
-	model: "groq/llama-3.3-70b-versatile",
+	model: openrouter.chat("meta-llama/llama-3.3-70b-instruct"),
 	tools: { getAnalysisTool, searchDocumentTool },
 });

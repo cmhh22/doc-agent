@@ -1,15 +1,22 @@
 import { createWorkflow, createStep } from "@mastra/core/workflows";
 import { Agent } from "@mastra/core/agent";
+import { createOpenRouter } from "@openrouter/ai-sdk-provider";
 import { z } from "zod";
 
 // Agente interno usado solo por el workflow para extracción estructurada.
 // Cambiado a flash-lite (1000+ RPD gratis vs 20 RPD de flash) y consolidamos
 // resumen + clasificación en una sola llamada para ahorrar cuota.
+// Ahora usa OpenRouter en lugar de Groq (Groq bloqueado por geoblocking).
+
+const openrouter = createOpenRouter({
+  apiKey: process.env.OPENROUTER_API_KEY,
+});
+
 const extractorAgent = new Agent({
   id: "extractor-agent",
   name: "extractor-agent",
   instructions: `Eres un analista de documentos. Extraes información estructurada y respondes SIEMPRE en JSON válido sin markdown ni texto adicional. Trabajas en español por defecto.`,
-  model: "groq/llama-3.3-70b-versatile",
+  model: openrouter.chat("meta-llama/llama-3.3-70b-instruct"),
 });
 
 // --- Schemas ---
