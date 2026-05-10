@@ -1,138 +1,139 @@
-# DocAgent — Asistente conversacional de documentos
+```markdown
+# DocAgent
 
-> Sube un documento (PDF/TXT/MD) y conversa con él en lenguaje natural. Construido con [Mastra](https://mastra.ai), Next.js 16 y Llama 3.3 70B vía Groq.
+AI-powered document analysis and conversational agent. Upload a document, get an instant structured analysis, and chat with its content in real time.
 
-![Mastra](https://img.shields.io/badge/Mastra-1.31-6366f1)
-![Next.js](https://img.shields.io/badge/Next.js-16-black)
-![TypeScript](https://img.shields.io/badge/TypeScript-strict-3178c6)
-![Groq](https://img.shields.io/badge/Groq-Llama_3.3_70B-orange)
+**Live demo:** [doc-agent-xxxx.vercel.app](https://doc-agent-xxxx.vercel.app)
 
 ---
 
-## Demo
+## What it does
 
-🔗 **Live demo:** _(se rellena tras el deploy)_
-
-![DocAgent — dark mode](screenshots/docagent-dark-loaded.png)
-
----
-
-## Qué hace
-
-1. El usuario sube un documento (PDF, TXT o MD)
-2. Un **workflow tipado de Mastra** procesa el contenido: extrae resumen, puntos clave, tipo y idioma en una sola pasada
-3. La UI muestra el análisis estructurado en un panel lateral
-4. El usuario chatea con un **agente conversacional** que responde sobre el documento, citando fragmentos literales cuando hace falta
-
-Diseño dev-tool con dark/light mode, streaming en vivo y persistencia por sesión.
+1. **Upload** a PDF, DOCX, TXT or MD file
+2. **Analyze** — a typed Mastra workflow extracts a summary, key points, document type, language and word count using Llama 3.3 70B
+3. **Chat** — ask anything about the document; the agent streams answers using the full document content as context
 
 ---
 
 ## Stack
 
-| Capa | Tecnología |
+| Layer | Technology |
 |---|---|
-| Framework AI | **Mastra v1.31** — agentes, tools, workflows |
-| LLM | **Llama 3.3 70B** vía Groq (free tier, 1.000 req/día) |
-| Frontend | Next.js 16 (App Router) + React 19 + Tailwind v4 |
-| Streaming | Web Streams nativo + AI SDK v6 |
-| Persistencia | Cookies httpOnly (sin BD) |
-| Parsing PDF | `pdf-parse` |
-| Validación | Zod en schemas de workflow y tools |
-| Deploy | Vercel |
+| Framework | Next.js 16 (App Router, Turbopack) |
+| Language | TypeScript |
+| AI orchestration | Mastra v1.31 (workflow + agent + tools) |
+| LLM | Llama 3.3 70B via OpenRouter |
+| AI SDK | Vercel AI SDK v6 |
+| Styling | Tailwind CSS v4 + CSS custom properties |
+| Fonts | Geist + IBM Plex Mono |
+| Persistence | localStorage (client-side, no database) |
+| Deploy | Vercel (serverless) |
 
 ---
 
-## Arquitectura
+## Architecture
 
 ````
-┌──────────────┐         ┌────────────────────────────────┐
-│  Next.js UI  │ ─POST──▶│  /api/analyze                   │
-│  (App Router)│         │                                  │
-│              │         │  ┌──────────────────────────┐   │
-│  - drop zone │         │  │ Mastra Workflow          │   │
-│  - panel doc │         │  │   1. extractStep (LLM)   │   │
-│  - chat      │         │  │   2. finalizeStep        │   │
-│              │         │  └──────────────────────────┘   │
-│              │ ◀──cookie httpOnly + JSON análisis        │
-│              │                                            │
-│              │ ─POST──▶│  /api/chat (streaming)           │
-│              │         │                                  │
-│              │         │  ┌──────────────────────────┐   │
-│              │         │  │ docChatAgent             │   │
-│              │         │  │   + getAnalysisTool      │   │
-│              │         │  │   + searchDocumentTool   │   │
-│              │         │  │   + reintento defensivo  │   │
-│              │         │  └──────────────────────────┘   │
-│              │ ◀──text/plain stream                      │
-└──────────────┘         └────────────────────────────────┘
+Browser (page.tsx)
+  │
+  ├── POST /api/analyze
+  │     └── extractText (pdf-parse / mammoth / utf-8)
+  │     └── Mastra workflow
+  │           ├── extractStep  → LLM call, JSON output
+  │           └── finalizeStep → wordCount, no LLM
+  │     └── returns { analysis, document } → stored in localStorage
+  │
+  └── POST /api/chat
+	  └── document injected into agent system message
+	  └── Mastra agent (docChatAgent)
+		  ├── tool: get-analysis
+		  └── tool: search-document
+	  └── streams response tokens back to client
 ````
 
-### Decisiones de diseño
-
-- **Workflow vs llamadas sueltas al LLM.** El análisis se modela como un workflow Mastra (no como una secuencia de awaits) para que sea versionable, observable y resiliente. Los pasos están tipados con Zod en input y output.
-- **Tools registradas en el agente.** El `docChatAgent` tiene dos tools (`get-analysis` y `search-document`) que demuestran el patrón Mastra de orquestación. En este MVP el contenido se inyecta vía system message para mantener la app stateless en Vercel; la estructura de tools queda lista para una versión con BD.
-- **Cookies httpOnly en lugar de BD.** Mantiene la app stateless en Vercel sin añadir Turso/Postgres. Funciona bien hasta ~80KB por documento (truncado en `lib/extractText.ts`).
-- **Reintento defensivo en el chat.** El tool calling de Llama 3.3 en Groq puede fallar de forma intermitente; el endpoint reintenta una vez y, si vuelve a fallar, devuelve un mensaje legible al usuario sin cortar la conexión.
-- **UI dev-tool con dark/light.** Estética tipo Linear/Vercel pensada para resultar familiar a developers. Persistencia del theme en `localStorage`.
+No database. No cookies. The document travels in the request body on every chat turn — stateless by design, works on Vercel serverless with zero infrastructure.
 
 ---
 
-## Cómo ejecutarlo en local
+## Running locally
 
-### Requisitos
-- Node.js 22.13+
-- API key de Groq (gratis en [console.groq.com](https://console.groq.com))
-
-### Pasos
 ```bash
-git clone https://github.com/<tu-usuario>/doc-agent.git
+# 1. Clone
+git clone https://github.com/YOUR_USERNAME/doc-agent.git
 cd doc-agent
+
+# 2. Install
 npm install
+
+# 3. Environment
 cp .env.example .env.local
-# Edita .env.local y pega tu GROQ_API_KEY
+# Add your OpenRouter API key to .env.local
+
+# 4. Dev server
 npm run dev
 ```
 
-Abre `http://localhost:3000`.
+Open [http://localhost:3000](http://localhost:3000).
 
 ---
 
-## Estructura del proyecto
+## Environment variables
 
-````
-doc-agent/
-├── app/
-│   ├── page.tsx                 # UI: chat + panel doc + theme toggle
-│   ├── api/
-│   │   ├── analyze/route.ts     # Endpoint de análisis (workflow Mastra)
-│   │   └── chat/route.ts        # Endpoint de chat (streaming + reintento)
-│   ├── layout.tsx
-│   └── globals.css
-├── mastra/
-│   ├── index.ts                 # Registro de agentes y workflows
-│   ├── agents/index.ts          # docChatAgent
-│   ├── tools/index.ts           # getAnalysisTool, searchDocumentTool
-│   ├── workflows/
-│   │   └── analyzeDocument.ts   # Workflow de 2 pasos
-│   └── store.ts                 # Tipos compartidos del documento
-├── lib/
-│   └── extractText.ts           # Parsing de PDF/TXT con truncado
-├── screenshots/                 # Capturas para README
-├── .env.example
-└── README.md
-````
+| Variable | Required | Description |
+|---|---|---|
+| `OPENROUTER_API_KEY` | ✅ | API key from [openrouter.ai](https://openrouter.ai/keys) |
 
 ---
 
-## Limitaciones conocidas
+## Supported file types
 
-- Documentos de más de 80.000 caracteres se truncan automáticamente.
-- PDFs escaneados (sólo imagen) no funcionan: no se hace OCR.
-- La sesión vive 4 horas en cookie httpOnly. Tras expirar hay que volver a subir el documento.
+| Format | Extension | Parser |
+|---|---|---|
+| PDF | `.pdf` | pdf-parse |
+| Word | `.docx` | mammoth |
+| Plain text | `.txt` | utf-8 |
+| Markdown | `.md` | utf-8 |
+
+Documents are truncated at 80,000 characters (~20k tokens) to fit within the model context window. A warning is shown when truncation occurs.
 
 ---
 
-## Sobre el autor
+## Project structure
 
-Construido como demo técnico de capacidades en TypeScript + frameworks de IA agéntica modernos.
+```markdown
+app/
+├── page.tsx                 # UI — chat + document panel
+├── layout.tsx               # Fonts, theme script
+├── globals.css              # CSS variables, scrollbars, utilities
+└── api/
+    ├── analyze/route.ts     # POST — runs Mastra workflow
+    └── chat/route.ts        # POST — streams agent response
+
+mastra/
+├── index.ts                 # Registers agent + workflow
+├── agents/index.ts          # docChatAgent (Llama 3.3 70B, OpenRouter)
+├── tools/index.ts           # get-analysis, search-document
+├── workflows/
+│   └── analyzeDocument.ts  # 2-step typed workflow
+└── store.ts                 # Shared types (StoredDocument, Analysis)
+
+lib/
+└── extractText.ts           # PDF / DOCX / text extraction
+```
+
+---
+
+## Key design decisions
+
+**localStorage + body over cookies** — browser cookies cap at 4 KB. Documents easily exceed this. The client stores the full document in localStorage and sends it in the body of every `/api/chat` request. This keeps the API stateless and compatible with Vercel serverless.
+
+**OpenRouter over Groq/Gemini** — Groq's Cloudflare layer blocks requests from certain regions. OpenRouter proxies to the same models without geographic restrictions.
+
+**Mastra workflow for analysis, agent for chat** — the structured analysis (JSON with fixed schema) benefits from a deterministic workflow with typed steps. Open-ended Q&A benefits from an agent that can decide which tool to use.
+
+---
+
+## License
+
+MIT
+```
