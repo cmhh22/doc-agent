@@ -1,22 +1,21 @@
-```markdown
 # DocAgent
 
 AI-powered document analysis and conversational agent. Upload a document, get an instant structured analysis, and chat with its content in real time — with token-by-token streaming responses.
 
 **🌐 Live demo:** [doc-agent-two.vercel.app](https://doc-agent-two.vercel.app/)
 
-![Stack](https://img.shields.io/badge/Next.js-16-black?logo=nextdotjs)
-![Stack](https://img.shields.io/badge/TypeScript-5-blue?logo=typescript)
-![Stack](https://img.shields.io/badge/Mastra-1.31-purple)
-![Stack](https://img.shields.io/badge/Llama_3.3_70B-via_OpenRouter-orange)
+![Next.js](https://img.shields.io/badge/Next.js-16-black?logo=nextdotjs)
+![TypeScript](https://img.shields.io/badge/TypeScript-5-blue?logo=typescript)
+![Mastra](https://img.shields.io/badge/Mastra-1.31-purple)
+![Llama 3.3](https://img.shields.io/badge/Llama_3.3_70B-via_OpenRouter-orange)
 
 ---
 
 ## What it does
 
-1. **Upload** a PDF, DOCX, TXT or MD file (drag & drop or click)
-2. **Analyze** — a typed Mastra workflow runs Llama 3.3 70B to extract a structured summary, key points, document type, language and word count
-3. **Chat** — ask anything about the document; the agent streams answers using the full document content as context, with two registered tools (`get-analysis`, `search-document`)
+1. **Upload** a PDF, DOCX, TXT or MD file (drag & drop or click).
+2. **Analyze** — a typed Mastra workflow runs Llama 3.3 70B to extract a structured summary, key points, document type, language and word count.
+3. **Chat** — ask anything about the document; the agent streams answers using the full document content as context, with two registered tools (`get-analysis`, `search-document`).
 
 The UI follows an editorial / technical-manual aesthetic with a dark/light theme toggle, draggable panel divider, and IBM Plex Mono for technical typography.
 
@@ -25,7 +24,7 @@ The UI follows an editorial / technical-manual aesthetic with a dark/light theme
 ## Stack
 
 | Layer | Technology |
-|---|---|
+| --- | --- |
 | Framework | Next.js 16 (App Router, Turbopack) |
 | Language | TypeScript |
 | AI orchestration | Mastra v1.31 — typed workflow + agent + tools |
@@ -40,23 +39,21 @@ The UI follows an editorial / technical-manual aesthetic with a dark/light theme
 
 ## Architecture
 
-```
-Browser (page.tsx)
-  │
-  ├── POST /api/analyze
-  │     └── extractText: pdf-parse / mammoth / utf-8
-  │     └── Mastra workflow (analyzeDocumentWorkflow)
-  │           ├── extractStep   → single LLM call, structured JSON output
-  │           └── finalizeStep  → wordCount, no LLM
-  │     └── returns { docId, analysis, document } → stored in localStorage
-  │
-  └── POST /api/chat
-    └── document injected into agent system message
-    └── Mastra agent (docChatAgent — Llama 3.3 70B)
-        ├── tool: get-analysis
-        └── tool: search-document
-    └── streams response tokens back to client
-```
+    Browser (page.tsx)
+      │
+      ├── POST /api/analyze
+      │     └── extractText: pdf-parse / mammoth / utf-8
+      │     └── Mastra workflow (analyzeDocumentWorkflow)
+      │           ├── extractStep   → single LLM call, structured JSON output
+      │           └── finalizeStep  → wordCount, no LLM
+      │     └── returns { docId, analysis, document } → stored in localStorage
+      │
+      └── POST /api/chat
+            └── document injected into agent system message
+            └── Mastra agent (docChatAgent — Llama 3.3 70B)
+                  ├── tool: get-analysis
+                  └── tool: search-document
+            └── streams response tokens back to client
 
 **No database. No cookies.** The document travels in the request body on every chat turn — stateless by design, works on Vercel serverless with zero infrastructure.
 
@@ -87,7 +84,7 @@ Open [http://localhost:3000](http://localhost:3000).
 ## Environment variables
 
 | Variable | Required | Description |
-|---|---|---|
+| --- | --- | --- |
 | `OPENROUTER_API_KEY` | ✅ | API key from [openrouter.ai/keys](https://openrouter.ai/keys) |
 
 ---
@@ -95,7 +92,7 @@ Open [http://localhost:3000](http://localhost:3000).
 ## Supported file types
 
 | Format | Extension | Parser |
-|---|---|---|
+| --- | --- | --- |
 | PDF | `.pdf` | `pdf-parse` (v1.1.1) |
 | Word | `.docx` | `mammoth` |
 | Plain text | `.txt` | utf-8 |
@@ -107,26 +104,24 @@ Documents are truncated at 80,000 characters (~20k tokens) to fit within the mod
 
 ## Project structure
 
-```markdown
-app/
-├── page.tsx                 # UI — chat + document panel + draggable divider
-├── layout.tsx               # Geist + IBM Plex Mono, theme script
-├── globals.css              # Theme tokens, subtle scrollbars, utilities
-└── api/
-  ├── analyze/route.ts     # POST — runs Mastra workflow
-  └── chat/route.ts        # POST — streams agent response
-
-mastra/
-├── index.ts                 # Registers agent + workflow
-├── agents/index.ts          # docChatAgent (Llama 3.3 70B via OpenRouter)
-├── tools/index.ts           # get-analysis, search-document
-├── workflows/
-│   └── analyzeDocument.ts   # 2-step typed workflow with Zod schemas
-└── store.ts                 # Shared types (StoredDocument, Analysis)
-
-lib/
-└── extractText.ts           # PDF / DOCX / text extraction
-```
+    app/
+    ├── page.tsx                 # UI — chat + document panel + draggable divider
+    ├── layout.tsx               # Geist + IBM Plex Mono, theme script
+    ├── globals.css              # Theme tokens, subtle scrollbars, utilities
+    └── api/
+        ├── analyze/route.ts     # POST — runs Mastra workflow
+        └── chat/route.ts        # POST — streams agent response
+    
+    mastra/
+    ├── index.ts                 # Registers agent + workflow
+    ├── agents/index.ts          # docChatAgent (Llama 3.3 70B via OpenRouter)
+    ├── tools/index.ts           # get-analysis, search-document
+    ├── workflows/
+    │   └── analyzeDocument.ts   # 2-step typed workflow with Zod schemas
+    └── store.ts                 # Shared types (StoredDocument, Analysis)
+    
+    lib/
+    └── extractText.ts           # PDF / DOCX / text extraction
 
 ---
 
@@ -136,7 +131,7 @@ lib/
 
 **OpenRouter over Groq.** Groq's Cloudflare edge layer blocks requests from certain regions. OpenRouter proxies to the same Llama 3.3 70B model without geographic restrictions, while keeping a free tier suitable for portfolio projects.
 
-**Mastra workflow for analysis, agent for chat.** The structured analysis (JSON with fixed schema) benefits from a deterministic workflow with typed steps and Zod validation. Open-ended Q&A benefits from an agent that can decide which tool to call. Same framework, different patterns for different problems.
+**Mastra workflow for analysis, agent for chat.** The structured analysis (JSON with a fixed schema) benefits from a deterministic workflow with typed steps and Zod validation. Open-ended Q&A benefits from an agent that can decide which tool to call. Same framework, different patterns for different problems.
 
 **Defensive retry on tool-calling errors.** Some hosted LLMs occasionally fail to emit valid tool-call JSON. The chat endpoint catches recognizable upstream errors and retries once before falling back to a graceful error message — keeps the UX smooth without surfacing provider quirks.
 
@@ -145,4 +140,3 @@ lib/
 ## License
 
 MIT
-```
